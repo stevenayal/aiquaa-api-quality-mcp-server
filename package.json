@@ -1,0 +1,73 @@
+{
+  "name": "aiquaa-api-quality-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server that analyzes APIs and requirements, evaluates test coverage, and generates or maintains Postman/Newman automation with GitHub PR delivery.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "postman",
+    "newman",
+    "api-testing",
+    "openapi",
+    "aiquaa"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stevenayal/aiquaa-api-quality-mcp-server.git"
+  },
+  "homepage": "https://github.com/stevenayal/aiquaa-api-quality-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/stevenayal/aiquaa-api-quality-mcp-server/issues"
+  },
+  "type": "module",
+  "bin": {
+    "aiquaa-api-quality-mcp-server": "dist/index.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "npm run build && node --watch dist/index.js",
+    "prepack": "npm run build",
+    "lint": "eslint src --max-warnings 0",
+    "format": "prettier --check .",
+    "format:write": "prettier --write .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "check": "npm run lint && npm run build && npm run test"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@octokit/rest": "22.0.0",
+    "express": "5.2.1",
+    "yaml": "2.9.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.1",
+    "@types/express": "4.17.25",
+    "@types/node": "22.19.19",
+    "@vitest/coverage-v8": "3.2.4",
+    "eslint": "9.39.1",
+    "eslint-config-prettier": "9.1.2",
+    "prettier": "3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.65.0",
+    "vitest": "3.2.4"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}
