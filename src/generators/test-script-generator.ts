@@ -12,12 +12,20 @@ export interface DbSandboxRef {
 export interface DbPreCondition {
   query: string;
   expect?: unknown;
+  /** Collection variable to store the query result (or extractPath of it) into, before the request fires. */
+  captureAs?: string | undefined;
+  /** Dot/bracket path into the sandbox response, e.g. "data[0].id". Omit to capture the whole response. */
+  extractPath?: string | undefined;
 }
 
 export interface DbPostCheck {
   query: string;
   expect?: unknown;
   description: string;
+  /** Collection variable to store the query result (or extractPath of it) into, after the response. */
+  captureAs?: string | undefined;
+  /** Dot/bracket path into the sandbox response, e.g. "data[0].id". Omit to capture the whole response. */
+  extractPath?: string | undefined;
 }
 
 export interface TestScriptOptions {
@@ -95,7 +103,10 @@ export function buildCaptureIdScript(variableName: string, jsonField = "id"): st
   ].join("\n");
 }
 
-export function buildSqlSandboxHelperScript(baseUrlVariable: string, apiKeyVariable: string): string {
+export function buildSqlSandboxHelperScript(
+  baseUrlVariable: string,
+  apiKeyVariable: string,
+): string {
   return [
     `const sqlSandboxBaseUrl = pm.collectionVariables.get(${JSON.stringify(baseUrlVariable)});`,
     "if (!sqlSandboxBaseUrl) {",
@@ -105,7 +116,38 @@ export function buildSqlSandboxHelperScript(baseUrlVariable: string, apiKeyVaria
     "if (!sqlSandboxApiKey) {",
     `  throw new Error("Configurá la variable \\"${apiKeyVariable}\\" (environment) con la API key del sandbox SQL antes de correr esta colección.");`,
     "}",
+    // Path getter compartido por los pre/post-request de captura de datos
+    // dinámicos (dbValidation.*.captureAs). Declarado como global implícito
+    // (sin var/let/const), igual que `sqlSandboxBaseUrl`/`sqlSandboxApiKey`
+    // arriba, para que esté disponible en el script del request sin volver a
+    // declararlo por cada item.
+    'if (typeof aiquaaGetPath === "undefined") {',
+    "  aiquaaGetPath = function (obj, path) {",
+    "    return path",
+    '      .replace(/\\[(\\d+)\\]/g, ".$1")',
+    '      .split(".")',
+    "      .filter(Boolean)",
+    "      .reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);",
+    "  };",
+    "}",
   ].join("\n");
+}
+
+function buildCaptureLines(
+  captureAs: string,
+  extractPath: string | undefined,
+  query: string,
+): string[] {
+  const valueExpr = extractPath
+    ? `aiquaaGetPath(result, ${JSON.stringify(extractPath)})`
+    : "result";
+  return [
+    `  const capturedValue = ${valueExpr};`,
+    "  if (capturedValue === undefined) {",
+    `    throw new Error(\`No se pudo obtener ${extractPath ? `"${extractPath.replace(/`/g, "'")}"` : "el resultado"} de la consulta SQL "${query.replace(/`/g, "'").replace(/"/g, '\\"')}" para capturar "${captureAs}".\`);`,
+    "  }",
+    `  pm.collectionVariables.set(${JSON.stringify(captureAs)}, capturedValue);`,
+  ];
 }
 
 export function buildTemplateClonePrerequestScript(
@@ -140,18 +182,34 @@ function buildSqlSandboxRequestObject(sandbox: DbSandboxRef, query: string): str
   ].join("\n");
 }
 
-export function buildDbPreconditionScript(preCondition: DbPreCondition, sandbox: DbSandboxRef): string {
-  return [
+export function buildDbPreconditionScript(
+  preCondition: DbPreCondition,
+  sandbox: DbSandboxRef,
+): string {
+  const lines = [
     `pm.sendRequest(${buildSqlSandboxRequestObject(sandbox, preCondition.query)}, (error, response) => {`,
     "  if (error) {",
-    '    throw new Error(`Precondición SQL falló: ${error.message}`);',
+    "    throw new Error(`Precondición SQL falló: ${error.message}`);",
     "  }",
     "  const result = response.json();",
-    `  if (JSON.stringify(result) !== JSON.stringify(${JSON.stringify(preCondition.expect)})) {`,
-    `    throw new Error(\`Precondición SQL no cumplida para "${preCondition.query.replace(/`/g, "'")}"\`);`,
-    "  }",
-    "});",
-  ].join("\n");
+  ];
+
+  if (preCondition.expect !== undefined) {
+    lines.push(
+      `  if (JSON.stringify(result) !== JSON.stringify(${JSON.stringify(preCondition.expect)})) {`,
+      `    throw new Error(\`Precondición SQL no cumplida para "${preCondition.query.replace(/`/g, "'")}"\`);`,
+      "  }",
+    );
+  }
+
+  if (preCondition.captureAs) {
+    lines.push(
+      ...buildCaptureLines(preCondition.captureAs, preCondition.extractPath, preCondition.query),
+    );
+  }
+
+  lines.push("});");
+  return lines.join("\n");
 }
 
 export function buildDbPostCheckAssertion(
@@ -161,12 +219,22 @@ export function buildDbPostCheckAssertion(
 ): AssertionSpec {
   const tag = requirementIds.length > 0 ? `${requirementIds.join(" | ")} | ` : "";
   const name = `${tag}${postCheck.description}`;
+  const assertionLines =
+    postCheck.expect !== undefined
+      ? [`    pm.expect(result).to.eql(${JSON.stringify(postCheck.expect)});`]
+      : [];
+  const captureLines = postCheck.captureAs
+    ? buildCaptureLines(postCheck.captureAs, postCheck.extractPath, postCheck.query).map(
+        (line) => `  ${line}`,
+      )
+    : [];
   const body = [
     `pm.test(${JSON.stringify(name)}, () => {`,
     `  pm.sendRequest(${buildSqlSandboxRequestObject(sandbox, postCheck.query)}, (error, response) => {`,
     "    pm.expect(error).to.be.null;",
     "    const result = response.json();",
-    `    pm.expect(result).to.eql(${JSON.stringify(postCheck.expect)});`,
+    ...assertionLines,
+    ...captureLines,
     "  });",
     "});",
   ].join("\n");
