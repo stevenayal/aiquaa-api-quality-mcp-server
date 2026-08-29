@@ -164,6 +164,7 @@ export interface PostmanRequestSummary {
   assertionNames: string[];
   hasPreRequestScript: boolean;
   hasTestScript: boolean;
+  hasDbVerification: boolean;
 }
 
 export interface PostmanCollectionSummary {

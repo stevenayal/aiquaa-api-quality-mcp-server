@@ -69,6 +69,7 @@ Agregar a la configuración de tu cliente MCP (Claude Code, Claude Desktop, etc.
 | `GITHUB_API_URL`          | no                                     | Para GitHub Enterprise. Default `https://api.github.com`.                        |
 | `AIQUAA_API_BASE_URL`     | no                                     | Backend AIQUAA para requisitos/reglas remotas.                                   |
 | `AIQUAA_ACCESS_TOKEN`     | no                                     | JWT para AIQUAA en desarrollo (en producción, `Authorization: Bearer` a `/mcp`). |
+| `AIQUAA_SQL_SANDBOX_BASE_URL` | no                                 | Default de referencia para el sandbox SQL del [patrón pre/post-request](#patrón-de-validación-sql-pre-post-request). |
 | `CODEGRAPH_BIN`           | no (default `codegraph`)               | Binario de CodeGraph.                                                            |
 | `CODEGRAPH_ALLOWED_ROOTS` | no                                     | Carpetas permitidas para `codegraph`, separadas por el separador de PATH del SO. |
 | `ENGRAM_BIN`              | no (default `engram`)                  | Binario de Engram.                                                               |
@@ -142,6 +143,55 @@ ya existen.
 ### Uso de `dryRun`
 
 `api_pr` tiene `dry_run=true` por defecto: devuelve rama, título, cuerpo del PR y archivos planificados sin tocar GitHub. Solo con `dry_run=false` explícito se crea la rama, se commitean los archivos y se abre el PR (como draft, salvo `draft=false` explícito).
+
+## Patrón de validación SQL pre/post-request
+
+Para endpoints de escritura (`POST`/`PUT`/`PATCH`/`DELETE`) que necesitan verificar el efecto real en base de datos, `api_generar` puede armar automáticamente el patrón usado como referencia en [aiquaa-sandbox-api](https://github.com/aiquaa-labs/aiquaa-sandbox-api) (PR #12), en vez de escribirlo a mano en cada colección:
+
+1. **Sandbox SQL como config de primera clase**: declarás `sql_sandbox` una sola vez por colección. Sembra dos variables (`sqlSandboxBaseUrl` no-secreta, `sqlSandboxApiKey` secreta — vacía en el archivo generado) y agrega un pre-request script a nivel colección que falla rápido si esas variables no están configuradas.
+2. **Body por plantilla + mutación**: una operación "happy path" con `bodyTemplateVariable` + `requestBodyExample` siembra la plantilla como collection variable. Cualquier otra operación que apunte al mismo `bodyTemplateVariable` con `bodyMutations` genera un pre-request script que clona esa plantilla y muta solo el campo bajo prueba — ideal para casos negativos sin repetir el JSON completo.
+3. **Verificación en base (pre y post)**: `dbValidation.preCondition` agrega, al pre-request del item, un `pm.sendRequest` contra el sandbox que aborta el test si el estado inicial de la base no es el esperado. `dbValidation.postCheck` agrega, al test del item, un `pm.test(...)` con un segundo `pm.sendRequest` anidado que valida el efecto real después de la respuesta — con trazabilidad `REQ-`/`AC-`/`BR-` en el nombre del test, igual que el resto de las assertions generadas.
+
+```json
+{
+  "api_name": "Orders API",
+  "mode": "create",
+  "sql_sandbox": {
+    "base_url_variable": "sqlSandboxBaseUrl",
+    "api_key_variable": "sqlSandboxApiKey"
+  },
+  "operations": [
+    {
+      "operationId": "createOrder",
+      "method": "POST",
+      "path": "/orders",
+      "expectedStatus": 201,
+      "requirementIds": ["REQ-010"],
+      "requestBodyExample": { "amount": 100, "customerId": "c-1" },
+      "bodyTemplateVariable": "createOrder_template",
+      "dbValidation": {
+        "preCondition": { "query": "SELECT COUNT(*) FROM orders", "expect": 0 },
+        "postCheck": {
+          "query": "SELECT COUNT(*) FROM orders WHERE customer_id = 'c-1'",
+          "expect": 1,
+          "description": "se creó 1 fila en orders para c-1"
+        }
+      }
+    },
+    {
+      "operationId": "createOrderNegativeAmount",
+      "method": "POST",
+      "path": "/orders",
+      "expectedStatus": 400,
+      "requirementIds": ["REQ-010", "BR-003"],
+      "bodyTemplateVariable": "createOrder_template",
+      "bodyMutations": { "amount": -1 }
+    }
+  ]
+}
+```
+
+`api_validar` advierte si una colección declara `sql_sandbox` (variables `sqlSandboxBaseUrl`/`sqlSandboxApiKey`) y algún request de escritura no tiene pre-request script o no verifica el efecto en base (sin `pm.sendRequest` en su test).
 
 ## Configuración de GitHub
 

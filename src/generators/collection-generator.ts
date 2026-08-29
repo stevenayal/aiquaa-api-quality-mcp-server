@@ -2,7 +2,12 @@ import type { HttpMethod, PostmanCollectionSummary } from "../types/index.js";
 import { findRequestByOperation, parsePostmanCollection } from "../analyzers/postman-analyzer.js";
 import {
   buildAssertions,
+  buildDbPreconditionScript,
+  buildSqlSandboxHelperScript,
+  buildTemplateClonePrerequestScript,
   joinAssertions,
+  type DbPostCheck,
+  type DbPreCondition,
   type TestScriptOptions,
 } from "./test-script-generator.js";
 
@@ -15,6 +20,17 @@ export interface CollectionOperationInput {
   expectedStatus: number;
   requiredFields: string[];
   requirementIds: string[];
+  bodyTemplateVariable?: string;
+  bodyMutations?: Record<string, unknown>;
+  dbValidation?: {
+    preCondition?: DbPreCondition | undefined;
+    postCheck: DbPostCheck;
+  };
+}
+
+export interface CollectionSqlSandboxOptions {
+  baseUrlVariable: string;
+  apiKeyVariable: string;
 }
 
 export interface CollectionGeneratorOptions {
@@ -23,6 +39,7 @@ export interface CollectionGeneratorOptions {
   baseUrlVariable: string;
   operations: CollectionOperationInput[];
   existingCollection?: string | Record<string, unknown>;
+  sqlSandbox?: CollectionSqlSandboxOptions;
 }
 
 export interface CollectionGenerationResult {
@@ -76,7 +93,10 @@ export function generateOrExtendCollection(
       }
       const item = items.find((entry) => entry.name === existingRequest.name);
       if (item) {
-        appendAssertions(item, buildTestOptions({ ...operation, requiredFields: missingFields }));
+        appendAssertions(
+          item,
+          buildTestOptions({ ...operation, requiredFields: missingFields }, options.sqlSandbox),
+        );
         modifiedOperationIds.push(operation.operationId);
         continue;
       }
@@ -85,7 +105,7 @@ export function generateOrExtendCollection(
     if (existingRequest && options.mode === "modify") {
       const item = items.find((entry) => entry.name === existingRequest.name);
       if (item) {
-        replaceAssertions(item, buildTestOptions(operation));
+        replaceAssertions(item, buildTestOptions(operation, options.sqlSandbox));
         modifiedOperationIds.push(operation.operationId);
         continue;
       }
@@ -96,7 +116,7 @@ export function generateOrExtendCollection(
       continue;
     }
 
-    items.push(buildItem(operation, options.baseUrlVariable));
+    items.push(buildItem(operation, options.baseUrlVariable, options.sqlSandbox));
     addedOperationIds.push(operation.operationId);
   }
 
@@ -109,7 +129,8 @@ export function generateOrExtendCollection(
       schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
     },
     item: items,
-    variable: existingJson?.["variable"] ?? [{ key: options.baseUrlVariable, value: "" }],
+    variable: buildVariableArray(existingJson, options.baseUrlVariable, options.operations),
+    ...buildRootEvent(existingJson, options.sqlSandbox),
   };
 
   return { collectionJson, addedOperationIds, skippedOperationIds, modifiedOperationIds };
@@ -119,17 +140,70 @@ function normalizeExisting(source: string | Record<string, unknown>): Record<str
   return typeof source === "string" ? (JSON.parse(source) as Record<string, unknown>) : source;
 }
 
-function buildTestOptions(operation: CollectionOperationInput): TestScriptOptions {
+function buildVariableArray(
+  existingJson: Record<string, unknown> | undefined,
+  baseUrlVariable: string,
+  operations: CollectionOperationInput[],
+): Array<{ key: string; value: string }> {
+  const existingVariable = (existingJson?.["variable"] as
+    | Array<{ key: string; value: string }>
+    | undefined) ?? [{ key: baseUrlVariable, value: "" }];
+
+  const merged = new Map(existingVariable.map((variable) => [variable.key, variable.value]));
+  for (const operation of operations) {
+    if (operation.bodyTemplateVariable && operation.requestBodyExample) {
+      merged.set(operation.bodyTemplateVariable, JSON.stringify(operation.requestBodyExample));
+    }
+  }
+  return [...merged.entries()].map(([key, value]) => ({ key, value }));
+}
+
+function buildRootEvent(
+  existingJson: Record<string, unknown> | undefined,
+  sqlSandbox: CollectionSqlSandboxOptions | undefined,
+): { event: Array<{ listen: string; script: { type: string; exec: string[] } }> } | object {
+  const existingEvent = (existingJson?.["event"] as
+    | Array<{ listen?: string; script?: { type: string; exec: string[] } }>
+    | undefined) ?? [];
+  const hasPreRequest = existingEvent.some((event) => event.listen === "prerequest");
+
+  if (hasPreRequest) {
+    return { event: existingEvent };
+  }
+  if (!sqlSandbox) {
+    return existingEvent.length > 0 ? { event: existingEvent } : {};
+  }
+
+  const script = buildSqlSandboxHelperScript(sqlSandbox.baseUrlVariable, sqlSandbox.apiKeyVariable);
+  return {
+    event: [
+      ...existingEvent,
+      { listen: "prerequest", script: { type: "text/javascript", exec: script.split("\n") } },
+    ],
+  };
+}
+
+function buildTestOptions(
+  operation: CollectionOperationInput,
+  sqlSandbox: CollectionSqlSandboxOptions | undefined,
+): TestScriptOptions {
   return {
     expectedStatus: operation.expectedStatus,
     requiredFields: operation.requiredFields,
     requirementIds: operation.requirementIds,
     expectedContentType: "application/json",
+    ...(operation.dbValidation && sqlSandbox
+      ? { dbPostCheck: operation.dbValidation.postCheck, sqlSandbox }
+      : {}),
   };
 }
 
-function buildItem(operation: CollectionOperationInput, baseUrlVariable: string): PostmanItemJson {
-  const assertions = buildAssertions(buildTestOptions(operation));
+function buildItem(
+  operation: CollectionOperationInput,
+  baseUrlVariable: string,
+  sqlSandbox: CollectionSqlSandboxOptions | undefined,
+): PostmanItemJson {
+  const assertions = buildAssertions(buildTestOptions(operation, sqlSandbox));
   const pathSegments = operation.path.split("/").filter(Boolean);
   const header = operation.requiresAuth
     ? [
@@ -157,6 +231,49 @@ function buildItem(operation: CollectionOperationInput, baseUrlVariable: string)
     ],
   };
 
+  const prerequestScripts: string[] = [];
+  applyBody(item, operation, prerequestScripts);
+
+  if (operation.dbValidation?.preCondition && sqlSandbox) {
+    prerequestScripts.push(buildDbPreconditionScript(operation.dbValidation.preCondition, sqlSandbox));
+  }
+
+  if (prerequestScripts.length > 0) {
+    item.event.push({
+      listen: "prerequest",
+      script: { type: "text/javascript", exec: prerequestScripts.join("\n\n").split("\n") },
+    });
+  }
+
+  return item;
+}
+
+function applyBody(
+  item: PostmanItemJson,
+  operation: CollectionOperationInput,
+  prerequestScripts: string[],
+): void {
+  if (operation.bodyTemplateVariable) {
+    const mutations = operation.bodyMutations ?? {};
+    const hasMutations = Object.keys(mutations).length > 0;
+    const bodyVariable = hasMutations
+      ? `${operation.operationId}_body`
+      : operation.bodyTemplateVariable;
+
+    item.request.body = {
+      mode: "raw",
+      raw: `{{${bodyVariable}}}`,
+      options: { raw: { language: "json" } },
+    };
+
+    if (hasMutations) {
+      prerequestScripts.push(
+        buildTemplateClonePrerequestScript(operation.bodyTemplateVariable, bodyVariable, mutations),
+      );
+    }
+    return;
+  }
+
   if (operation.requestBodyExample) {
     item.request.body = {
       mode: "raw",
@@ -164,8 +281,6 @@ function buildItem(operation: CollectionOperationInput, baseUrlVariable: string)
       options: { raw: { language: "json" } },
     };
   }
-
-  return item;
 }
 
 function appendAssertions(item: PostmanItemJson, options: TestScriptOptions): void {

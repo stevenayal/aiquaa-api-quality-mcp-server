@@ -68,6 +68,7 @@ function walkItems(
       assertionNames: extractAssertionNames(testScript),
       hasPreRequestScript: preRequestScript.trim().length > 0,
       hasTestScript: testScript.trim().length > 0,
+      hasDbVerification: testScript.includes("pm.sendRequest"),
     });
   }
 }

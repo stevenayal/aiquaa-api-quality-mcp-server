@@ -16,6 +16,40 @@ const OperationInputSchema = z
     expectedStatus: z.number().int().min(100).max(599).default(200),
     requiredFields: z.array(z.string().min(1)).default([]),
     requirementIds: z.array(RequirementIdSchema).default([]),
+    bodyTemplateVariable: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        "Nombre de la collection variable que guarda el JSON base del body. Si se declara sin bodyMutations, el request usa la plantilla directamente; con bodyMutations, un pre-request script la clona y muta.",
+      ),
+    bodyMutations: z
+      .record(z.unknown())
+      .optional()
+      .describe(
+        "Campos a mutar sobre bodyTemplateVariable para armar el body de este caso (ej. un caso negativo).",
+      ),
+    dbValidation: z
+      .object({
+        preCondition: z
+          .object({ query: z.string().min(1), expect: z.unknown() })
+          .strict()
+          .optional()
+          .describe("Query SQL a validar contra el sandbox antes de disparar el request."),
+        postCheck: z
+          .object({
+            query: z.string().min(1),
+            expect: z.unknown(),
+            description: z.string().min(1),
+          })
+          .strict()
+          .describe("Query SQL a validar contra el sandbox después de la respuesta."),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Verificación de efecto en base de datos vía el sandbox SQL (requiere sql_sandbox configurado a nivel colección).",
+      ),
   })
   .strict();
 
@@ -54,6 +88,16 @@ export const ApiGenerarInputObjectSchema = z
       .default([])
       .describe(
         "Variables adicionales a declarar en el environment (los valores secretos quedan vacíos).",
+      ),
+    sql_sandbox: z
+      .object({
+        base_url_variable: z.string().min(1).default("sqlSandboxBaseUrl"),
+        api_key_variable: z.string().min(1).default("sqlSandboxApiKey"),
+      })
+      .strict()
+      .optional()
+      .describe(
+        "Config del sandbox SQL usado para verificar el efecto en base de requests de escritura. Si se declara, se genera un pre-request script de colección y se habilitan dbValidation/bodyTemplateVariable en las operaciones.",
       ),
     response_format: ResponseFormatSchema,
   })

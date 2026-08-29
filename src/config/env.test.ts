@@ -45,10 +45,17 @@ describe("loadServerEnv", () => {
       MCP_PATH: "custom",
       GITHUB_TOKEN: "ghp_test",
       AIQUAA_API_BASE_URL: "https://api.example.com",
+      AIQUAA_SQL_SANDBOX_BASE_URL: "https://sql-sandbox.example.com",
     });
     expect(env.port).toBe(4000);
     expect(env.mcpPath).toBe("/custom");
     expect(env.githubToken).toBe("ghp_test");
     expect(env.aiquaaApiBaseUrl).toBe("https://api.example.com");
+    expect(env.aiquaaSqlSandboxBaseUrl).toBe("https://sql-sandbox.example.com");
+  });
+
+  it("leaves aiquaaSqlSandboxBaseUrl undefined when unset", () => {
+    const env = loadServerEnv({});
+    expect(env.aiquaaSqlSandboxBaseUrl).toBeUndefined();
   });
 });
