@@ -218,6 +218,83 @@ describe("generateOrExtendCollection", () => {
     expect(testExec).toContain("se creó 1 fila en orders");
   });
 
+  it("captures a dynamic value from the DB pre-request and lets the request use it via {{var}}", () => {
+    const result = generateOrExtendCollection({
+      apiName: "Facturas API",
+      mode: "create",
+      baseUrlVariable: "baseUrl",
+      operations: [
+        {
+          operationId: "pagarFactura",
+          method: "POST",
+          path: "/facturas/{{facturaIdDinamico}}/pagar",
+          requiresAuth: false,
+          expectedStatus: 200,
+          requiredFields: [],
+          requirementIds: ["REQ-020"],
+          requestBodyExample: { metodoPago: "tarjeta" },
+          dbValidation: {
+            preCondition: {
+              query: "SELECT id FROM facturas WHERE estado = 'pendiente' LIMIT 1",
+              captureAs: "facturaIdDinamico",
+              extractPath: "data[0].id",
+            },
+          },
+        },
+      ],
+      sqlSandbox: { baseUrlVariable: "sqlSandboxBaseUrl", apiKeyVariable: "sqlSandboxApiKey" },
+    });
+
+    const items = result.collectionJson["item"] as Array<{
+      request: { url: { raw: string } };
+      event: Array<{ listen: string; script: { exec: string[] } }>;
+    }>;
+    expect(items[0]!.request.url.raw).toBe("{{baseUrl}}/facturas/{{facturaIdDinamico}}/pagar");
+
+    const prerequest = items[0]!.event.find((e) => e.listen === "prerequest");
+    const exec = prerequest!.script.exec.join("\n");
+    expect(exec).toContain("SELECT id FROM facturas WHERE estado = 'pendiente' LIMIT 1");
+    expect(exec).toContain('aiquaaGetPath(result, "data[0].id")');
+    expect(exec).toContain('pm.collectionVariables.set("facturaIdDinamico", capturedValue);');
+  });
+
+  it("supports a postCheck-only dbValidation that just captures the generated id (no expect)", () => {
+    const result = generateOrExtendCollection({
+      apiName: "Orders API",
+      mode: "create",
+      baseUrlVariable: "baseUrl",
+      operations: [
+        {
+          operationId: "createOrder",
+          method: "POST",
+          path: "/orders",
+          requiresAuth: false,
+          expectedStatus: 201,
+          requiredFields: [],
+          requirementIds: [],
+          requestBodyExample: { amount: 100 },
+          dbValidation: {
+            postCheck: {
+              query: "SELECT id FROM orders ORDER BY id DESC LIMIT 1",
+              captureAs: "createdOrderId",
+              extractPath: "data[0].id",
+              description: "captura el id real generado por el INSERT",
+            },
+          },
+        },
+      ],
+      sqlSandbox: { baseUrlVariable: "sqlSandboxBaseUrl", apiKeyVariable: "sqlSandboxApiKey" },
+    });
+
+    const items = result.collectionJson["item"] as Array<{
+      event: Array<{ listen: string; script: { exec: string[] } }>;
+    }>;
+    expect(items[0]!.event.some((e) => e.listen === "prerequest")).toBe(false);
+    const test = items[0]!.event.find((e) => e.listen === "test");
+    const testExec = test!.script.exec.join("\n");
+    expect(testExec).toContain('pm.collectionVariables.set("createdOrderId", capturedValue);');
+  });
+
   it("does not duplicate the root prerequest event when regenerating an existing collection", () => {
     const first = generateOrExtendCollection({
       apiName: "Users API",

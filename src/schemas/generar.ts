@@ -32,23 +32,74 @@ const OperationInputSchema = z
     dbValidation: z
       .object({
         preCondition: z
-          .object({ query: z.string().min(1), expect: z.unknown() })
+          .object({
+            query: z.string().min(1),
+            expect: z
+              .unknown()
+              .optional()
+              .describe("Valor esperado exacto de la respuesta del sandbox SQL."),
+            captureAs: z
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "Nombre de collection variable donde guardar el dato obtenido de la base antes del request (dato dinámico: un id real, un valor existente, etc.).",
+              ),
+            extractPath: z
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                'Path dentro de la respuesta del sandbox SQL para captureAs (ej. "data[0].id", "rows[0].email"). Si se omite, se captura la respuesta completa.',
+              ),
+          })
           .strict()
+          .refine((value) => value.expect !== undefined || value.captureAs !== undefined, {
+            message: "preCondition necesita `expect` y/o `captureAs`.",
+          })
           .optional()
-          .describe("Query SQL a validar contra el sandbox antes de disparar el request."),
+          .describe(
+            "Query SQL a correr en el pre-request: valida una precondición y/o captura un dato dinámico de la base en una collection variable.",
+          ),
         postCheck: z
           .object({
             query: z.string().min(1),
-            expect: z.unknown(),
+            expect: z
+              .unknown()
+              .optional()
+              .describe("Valor esperado exacto de la respuesta del sandbox SQL."),
+            captureAs: z
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                "Nombre de collection variable donde guardar un dato obtenido de la base después de la respuesta (ej. el id real que generó un INSERT, para encadenar el siguiente request).",
+              ),
+            extractPath: z
+              .string()
+              .min(1)
+              .optional()
+              .describe(
+                'Path dentro de la respuesta del sandbox SQL para captureAs (ej. "data[0].id").',
+              ),
             description: z.string().min(1),
           })
           .strict()
-          .describe("Query SQL a validar contra el sandbox después de la respuesta."),
+          .refine((value) => value.expect !== undefined || value.captureAs !== undefined, {
+            message: "postCheck necesita `expect` y/o `captureAs`.",
+          })
+          .optional()
+          .describe(
+            "Query SQL a correr después de la respuesta: valida el efecto en base y/o captura un dato dinámico generado por el request (ej. un id autogenerado).",
+          ),
       })
       .strict()
+      .refine((value) => value.preCondition !== undefined || value.postCheck !== undefined, {
+        message: "dbValidation necesita `preCondition` y/o `postCheck`.",
+      })
       .optional()
       .describe(
-        "Verificación de efecto en base de datos vía el sandbox SQL (requiere sql_sandbox configurado a nivel colección).",
+        "Automatiza pre-request/post-request contra el sandbox SQL: valida precondiciones/efectos en base y/o obtiene datos dinámicos reales de la base para usar en el request (requiere sql_sandbox configurado a nivel colección).",
       ),
   })
   .strict();
@@ -109,6 +160,18 @@ export const ApiGenerarInputSchema = ApiGenerarInputObjectSchema.superRefine((va
       code: z.ZodIssueCode.custom,
       message: "mode 'extend' o 'modify' requiere existing_collection.",
       path: ["existing_collection"],
+    });
+  }
+  if (!value.sql_sandbox) {
+    value.operations.forEach((operation, index) => {
+      if (operation.dbValidation) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "operations[].dbValidation requiere que la colección declare sql_sandbox (si no, el pre/post-request SQL nunca se genera).",
+          path: ["operations", index, "dbValidation"],
+        });
+      }
     });
   }
 });

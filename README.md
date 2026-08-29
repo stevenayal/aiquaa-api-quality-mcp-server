@@ -61,19 +61,19 @@ Agregar a la configuración de tu cliente MCP (Claude Code, Claude Desktop, etc.
 
 ### Variables de entorno
 
-| Variable                  | Requerida                              | Descripción                                                                      |
-| ------------------------- | -------------------------------------- | -------------------------------------------------------------------------------- |
-| `PORT`                    | no (default `3000`)                    | Puerto HTTP del servidor.                                                        |
-| `MCP_PATH`                | no (default `/mcp`)                    | Path del endpoint MCP.                                                           |
-| `GITHUB_TOKEN`            | solo para `api_pr` con `dry_run=false` | Token con permisos `contents:write` y `pull-requests:write`.                     |
-| `GITHUB_API_URL`          | no                                     | Para GitHub Enterprise. Default `https://api.github.com`.                        |
-| `AIQUAA_API_BASE_URL`     | no                                     | Backend AIQUAA para requisitos/reglas remotas.                                   |
-| `AIQUAA_ACCESS_TOKEN`     | no                                     | JWT para AIQUAA en desarrollo (en producción, `Authorization: Bearer` a `/mcp`). |
-| `AIQUAA_SQL_SANDBOX_BASE_URL` | no                                 | Default de referencia para el sandbox SQL del [patrón pre/post-request](#patrón-de-validación-sql-pre-post-request). |
-| `CODEGRAPH_BIN`           | no (default `codegraph`)               | Binario de CodeGraph.                                                            |
-| `CODEGRAPH_ALLOWED_ROOTS` | no                                     | Carpetas permitidas para `codegraph`, separadas por el separador de PATH del SO. |
-| `ENGRAM_BIN`              | no (default `engram`)                  | Binario de Engram.                                                               |
-| `ENGRAM_PROJECT_PREFIX`   | no (default `aiquaa-`)                 | Prefijo de namespace de memoria por proyecto.                                    |
+| Variable                      | Requerida                              | Descripción                                                                                                          |
+| ----------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                        | no (default `3000`)                    | Puerto HTTP del servidor.                                                                                            |
+| `MCP_PATH`                    | no (default `/mcp`)                    | Path del endpoint MCP.                                                                                               |
+| `GITHUB_TOKEN`                | solo para `api_pr` con `dry_run=false` | Token con permisos `contents:write` y `pull-requests:write`.                                                         |
+| `GITHUB_API_URL`              | no                                     | Para GitHub Enterprise. Default `https://api.github.com`.                                                            |
+| `AIQUAA_API_BASE_URL`         | no                                     | Backend AIQUAA para requisitos/reglas remotas.                                                                       |
+| `AIQUAA_ACCESS_TOKEN`         | no                                     | JWT para AIQUAA en desarrollo (en producción, `Authorization: Bearer` a `/mcp`).                                     |
+| `AIQUAA_SQL_SANDBOX_BASE_URL` | no                                     | Default de referencia para el sandbox SQL del [patrón pre/post-request](#patrón-de-validación-sql-pre-post-request). |
+| `CODEGRAPH_BIN`               | no (default `codegraph`)               | Binario de CodeGraph.                                                                                                |
+| `CODEGRAPH_ALLOWED_ROOTS`     | no                                     | Carpetas permitidas para `codegraph`, separadas por el separador de PATH del SO.                                     |
+| `ENGRAM_BIN`                  | no (default `engram`)                  | Binario de Engram.                                                                                                   |
+| `ENGRAM_PROJECT_PREFIX`       | no (default `aiquaa-`)                 | Prefijo de namespace de memoria por proyecto.                                                                        |
 
 Nunca se incluyen tokens, passwords ni API keys en los artefactos generados (colecciones, environments, pipelines). Ver [Seguridad](#seguridad).
 
@@ -151,6 +151,11 @@ Para endpoints de escritura (`POST`/`PUT`/`PATCH`/`DELETE`) que necesitan verifi
 1. **Sandbox SQL como config de primera clase**: declarás `sql_sandbox` una sola vez por colección. Sembra dos variables (`sqlSandboxBaseUrl` no-secreta, `sqlSandboxApiKey` secreta — vacía en el archivo generado) y agrega un pre-request script a nivel colección que falla rápido si esas variables no están configuradas.
 2. **Body por plantilla + mutación**: una operación "happy path" con `bodyTemplateVariable` + `requestBodyExample` siembra la plantilla como collection variable. Cualquier otra operación que apunte al mismo `bodyTemplateVariable` con `bodyMutations` genera un pre-request script que clona esa plantilla y muta solo el campo bajo prueba — ideal para casos negativos sin repetir el JSON completo.
 3. **Verificación en base (pre y post)**: `dbValidation.preCondition` agrega, al pre-request del item, un `pm.sendRequest` contra el sandbox que aborta el test si el estado inicial de la base no es el esperado. `dbValidation.postCheck` agrega, al test del item, un `pm.test(...)` con un segundo `pm.sendRequest` anidado que valida el efecto real después de la respuesta — con trazabilidad `REQ-`/`AC-`/`BR-` en el nombre del test, igual que el resto de las assertions generadas.
+4. **Datos dinámicos desde la base (`captureAs`)**: tanto `preCondition` como `postCheck` aceptan `captureAs` (nombre de la collection variable a llenar) y opcionalmente `extractPath` (path dentro de la respuesta del sandbox, ej. `"data[0].id"`; si se omite, se captura la respuesta completa). En vez de solo _validar_ un `expect` fijo, el pre/post-request corre la query, extrae el valor y lo guarda con `pm.collectionVariables.set(...)` — así el siguiente campo del body o segmento de la URL puede referenciarlo como `{{miVariable}}` sin necesidad de hardcodear un id de ejemplo. `expect` es ahora opcional: un `preCondition`/`postCheck` puede usarse solo para capturar (sin asserción), solo para asertar (comportamiento previo, sin cambios) o ambas cosas a la vez. Casos de uso típicos:
+   - **Pre-request**: `SELECT id FROM usuarios WHERE activo = true LIMIT 1` → `captureAs: "usuarioIdDinamico"` para pegarle a un endpoint con un usuario real en vez de un id fijo que puede no existir en esa corrida del sandbox.
+   - **Post-request**: `SELECT id FROM orders ORDER BY id DESC LIMIT 1` → `captureAs: "createdOrderId"` para encadenar el id real generado por el `INSERT` hacia el siguiente request (`GET /orders/{{createdOrderId}}`), sin depender de que la API devuelva ese id en el body de la respuesta.
+
+   El path getter (`aiquaaGetPath`) se declara una única vez, como global implícito, en el mismo pre-request script de colección que ya siembra `sqlSandboxBaseUrl`/`sqlSandboxApiKey` — no hay que declarar nada por request.
 
 ```json
 {
@@ -172,9 +177,10 @@ Para endpoints de escritura (`POST`/`PUT`/`PATCH`/`DELETE`) que necesitan verifi
       "dbValidation": {
         "preCondition": { "query": "SELECT COUNT(*) FROM orders", "expect": 0 },
         "postCheck": {
-          "query": "SELECT COUNT(*) FROM orders WHERE customer_id = 'c-1'",
-          "expect": 1,
-          "description": "se creó 1 fila en orders para c-1"
+          "query": "SELECT id FROM orders WHERE customer_id = 'c-1' ORDER BY id DESC LIMIT 1",
+          "captureAs": "createdOrderId",
+          "extractPath": "data[0].id",
+          "description": "captura el id real de la fila creada para c-1 (falla si no existe)"
         }
       }
     },
@@ -186,10 +192,19 @@ Para endpoints de escritura (`POST`/`PUT`/`PATCH`/`DELETE`) que necesitan verifi
       "requirementIds": ["REQ-010", "BR-003"],
       "bodyTemplateVariable": "createOrder_template",
       "bodyMutations": { "amount": -1 }
+    },
+    {
+      "operationId": "getOrder",
+      "method": "GET",
+      "path": "/orders/{{createdOrderId}}",
+      "expectedStatus": 200,
+      "requirementIds": ["REQ-011"]
     }
   ]
 }
 ```
+
+`getOrder` no necesita `dbValidation` propio: reutiliza `{{createdOrderId}}`, sembrado por el `postCheck.captureAs` de `createOrder` en la misma corrida — así se encadena el id real generado en la base sin depender de que la API lo devuelva en el body ni de hardcodear un id de ejemplo.
 
 `api_validar` advierte si una colección declara `sql_sandbox` (variables `sqlSandboxBaseUrl`/`sqlSandboxApiKey`) y algún request de escritura no tiene pre-request script o no verifica el efecto en base (sin `pm.sendRequest` en su test).
 
