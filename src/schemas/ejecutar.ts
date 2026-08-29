@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_PATHS } from "../constants.js";
 import { JsonOrTextSchema, ResponseFormatSchema } from "./common.js";
 
 export const ApiEjecutarInputSchema = z
@@ -17,6 +18,10 @@ export const ApiEjecutarInputSchema = z
     bail: z.boolean().default(false),
     delay_request_ms: z.number().int().min(0).max(60_000).default(0),
     global_variables: z.record(z.string()).default({}),
+    generate_pdf_report: z
+      .boolean()
+      .default(false)
+      .describe(`Genera un reporte PDF del resultado de la ejecución en ${DEFAULT_PATHS.newmanReportPdf}.`),
     confirmed_production_run: z
       .boolean()
       .default(false)

@@ -9,6 +9,7 @@ import type {
 import type { CoverageMatrixResult } from "../coverage/coverage-matrix.js";
 import type { ApiValidarResult } from "./api-validar.js";
 import type { PrFlowResult } from "../github/pr-flow.js";
+import type { UsageReport } from "../usage/types.js";
 
 export function filesToMarkdown(files: GeneratedFile[]): string {
   return files
@@ -101,6 +102,7 @@ export function newmanSummaryToMarkdown(summary: NewmanRunSummary): string {
     "",
     `Requests: ${summary.totalRequests} | Assertions: ${summary.totalAssertions} | Fallidas: ${summary.failedAssertions}`,
     `Duración: ${summary.durationMs}ms`,
+    ...(summary.pdfReportPath ? [`📄 Reporte PDF: ${summary.pdfReportPath}`] : []),
     "",
     ...summary.results
       .filter((r) => !r.passed)
@@ -140,6 +142,34 @@ export function changePlanToMarkdown(plan: ChangePlan): string {
     ...plan.filesToDeprecate.map((f) => `- ${f}`),
     ...(plan.risks.length > 0 ? ["", "## Riesgos", ...plan.risks.map((r) => `- ⚠️ ${r}`)] : []),
   ].join("\n");
+}
+
+export function usoTokensToMarkdown(report: UsageReport): string {
+  const lines = [
+    "# Reporte de uso de tokens",
+    "",
+    `> ⚠️ ${report.disclaimer}`,
+    "",
+    `**Modelo de referencia:** ${report.model}`,
+    `**Generado:** ${report.generatedAt}`,
+    "",
+    "## Total",
+    `Llamadas: ${report.total.calls} | Tokens estimados: ${report.total.estimatedTokens} | Costo estimado: $${report.total.estimatedCostUsd.toFixed(4)}`,
+    "",
+    "## Por fase",
+    ...(["desarrollo", "ejecucion"] as const).map(
+      (phase) =>
+        `- **${phase}**: ${report.byPhase[phase].calls} llamadas, ${report.byPhase[phase].estimatedTokens} tokens, $${report.byPhase[phase].estimatedCostUsd.toFixed(4)}`,
+    ),
+    "",
+    `## Por tool (${report.byTool.length})`,
+    ...report.byTool.map(
+      (tool) =>
+        `- ${tool.toolName} [${tool.phase}]: ${tool.calls} llamadas, ${tool.estimatedTokens} tokens, $${tool.estimatedCostUsd.toFixed(4)}`,
+    ),
+  ];
+  if (report.pdfReportPath) lines.push("", `📄 Reporte PDF: ${report.pdfReportPath}`);
+  return lines.join("\n");
 }
 
 export function prResultToMarkdown(result: PrFlowResult): string {

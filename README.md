@@ -86,11 +86,12 @@ Nunca se incluyen tokens, passwords ni API keys en los artefactos generados (col
 | `api_cobertura`  | Devuelve la matriz Requirement → Endpoint → Request → Assertions → Status.                                                                                   |
 | `api_generar`    | Genera o extiende colección Postman v2.1, environment y assertions (modos `create`/`extend`/`modify`).                                                       |
 | `api_validar`    | Valida estructuralmente colección/environment: JSON, schema v2.1, variables, duplicados, secretos. No ejecuta nada.                                          |
-| `api_ejecutar`   | Ejecuta Newman — solo cuando el usuario lo invoca explícitamente. Hosts de producción requieren `confirmed_production_run=true`.                             |
+| `api_ejecutar`   | Ejecuta Newman — solo cuando el usuario lo invoca explícitamente. Hosts de producción requieren `confirmed_production_run=true`. Con `generate_pdf_report=true` genera además un PDF del resultado. |
 | `api_fallos`     | Clasifica fallos de Newman/JUnit/mensajes de error por categoría (producto, contrato, datos, auth, test desactualizado, flaky, timeout, infraestructura...). |
 | `api_pipeline`   | Genera o extiende un workflow de GitHub Actions / Azure Pipelines con el job de Newman.                                                                      |
 | `api_cambios`    | Devuelve el plan de cambios (`ChangePlan`) antes de escribir nada: estrategia, archivos, cobertura antes/después.                                            |
 | `api_pr`         | Crea rama, aplica archivos y abre un draft PR. `dry_run=true` y `draft=true` por defecto.                                                                    |
+| `api_uso_tokens` | Reporta uso/costo **estimado** de tokens de la automatización, agrupado por fase (desarrollo/ejecución) y por tool. Es una estimación por tamaño de payload, no facturación real de un proveedor LLM — el servidor no realiza llamadas a modelos de lenguaje. Con `generate_pdf_report=true` genera además un PDF. |
 
 ## Flujo: de requisito a PR
 
@@ -273,7 +274,8 @@ docker run -p 3000:3000 aiquaa-api-quality-mcp-server
 - La detección de stack/endpoints es heurística (regex por framework), no un parser AST completo — cubre Express, NestJS, Fastify, Spring Boot, Quarkus, ASP.NET Core, FastAPI, Django y Flask con buena precisión en los casos comunes, pero puede fallar en estructuras muy atípicas. Siempre declara `confidence` y deja `missingInformation` explícito.
 - `api_ejecutar` requiere que `newman` esté instalable/disponible en el entorno donde corre el servidor.
 - `api_analizar` con `repository` requiere `GITHUB_TOKEN` con permiso de lectura sobre el repo y usa la API de Git Trees (limita a ~150 archivos relevantes y 200 KB por archivo para mantener el análisis acotado).
-- La generación de reportes HTML enriquecidos (PDF, HTMLExtra) queda del lado de Newman/CI (`newman-reporter-htmlextra`); el servidor no genera PDFs.
+- `api_ejecutar` puede generar un reporte PDF propio del resultado (`generate_pdf_report=true`, vía `pdfkit`, en `test-results/newman-report.pdf`) además de los reportes `cli`/`json`/`junit`/`htmlextra` de Newman. El HTML enriquecido (`newman-reporter-htmlextra`) sigue siendo responsabilidad de Newman/CI.
+- `api_uso_tokens` reporta un **estimado** de tokens/costo por tamaño de payload de cada invocación de tool (log en `test-results/usage-log.jsonl`) — no es telemetría real de un proveedor LLM, ya que este servidor no realiza llamadas a modelos de lenguaje.
 - El parseo de JUnit XML es basado en regex para los casos comunes de `<testcase>`/`<failure>`, no un parser XML completo.
 
 ## Licencia

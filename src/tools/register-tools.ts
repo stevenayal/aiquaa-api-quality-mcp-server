@@ -13,6 +13,7 @@ import {
   ApiPipelineInputSchema,
   ApiPrInputSchema,
   ApiRequisitosInputSchema,
+  ApiUsoTokensInputSchema,
   ApiValidarInputSchema,
 } from "../schemas/index.js";
 import type { ResponseFormat } from "../types/index.js";
@@ -26,6 +27,7 @@ import { runApiFallos } from "./api-fallos.js";
 import { runApiPipeline } from "./api-pipeline.js";
 import { runApiCambios } from "./api-cambios.js";
 import { runApiPr } from "./api-pr.js";
+import { runApiUsoTokens } from "./api-uso-tokens.js";
 import {
   analysisToMarkdown,
   changePlanToMarkdown,
@@ -35,8 +37,12 @@ import {
   newmanSummaryToMarkdown,
   prResultToMarkdown,
   requirementsToMarkdown,
+  usoTokensToMarkdown,
   validationToMarkdown,
 } from "./formatters.js";
+import { classifyPhase } from "../usage/phase-classifier.js";
+import { estimateTokens } from "../usage/token-estimator.js";
+import { recordUsageEvent } from "../usage/usage-store.js";
 
 export interface ToolContext {
   githubToken?: string;
@@ -82,11 +88,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: readOnlyAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(async () => {
-        const input = ApiAnalizarInputSchema.parse(rawInput);
-        const result = await runApiAnalizar(input);
-        return successResult(input.response_format, result, analysisToMarkdown(result));
-      }),
+      withUsageTracking("api_analizar", rawInput, () =>
+        safeToolCall(async () => {
+          const input = ApiAnalizarInputSchema.parse(rawInput);
+          const result = await runApiAnalizar(input);
+          return successResult(input.response_format, result, analysisToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -99,11 +107,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: generatingAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiRequisitosInputSchema.parse(rawInput);
-        const result = runApiRequisitos(input);
-        return successResult(input.response_format, result, requirementsToMarkdown(result));
-      }),
+      withUsageTracking("api_requisitos", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiRequisitosInputSchema.parse(rawInput);
+          const result = runApiRequisitos(input);
+          return successResult(input.response_format, result, requirementsToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -116,11 +126,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: readOnlyAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiCoberturaInputSchema.parse(rawInput);
-        const result = runApiCobertura(input);
-        return successResult(input.response_format, result, coverageToMarkdown(result));
-      }),
+      withUsageTracking("api_cobertura", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiCoberturaInputSchema.parse(rawInput);
+          const result = runApiCobertura(input);
+          return successResult(input.response_format, result, coverageToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -133,11 +145,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: generatingAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiGenerarInputSchema.parse(rawInput);
-        const result = runApiGenerar(input);
-        return successResult(input.response_format, result, filesToMarkdown(result.files));
-      }),
+      withUsageTracking("api_generar", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiGenerarInputSchema.parse(rawInput);
+          const result = runApiGenerar(input);
+          return successResult(input.response_format, result, filesToMarkdown(result.files));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -150,11 +164,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: readOnlyAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiValidarInputSchema.parse(rawInput);
-        const result = runApiValidar(input);
-        return successResult(input.response_format, result, validationToMarkdown(result));
-      }),
+      withUsageTracking("api_validar", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiValidarInputSchema.parse(rawInput);
+          const result = runApiValidar(input);
+          return successResult(input.response_format, result, validationToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -167,11 +183,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: executingAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(async () => {
-        const input = ApiEjecutarInputSchema.parse(rawInput);
-        const result = await runApiEjecutar(input);
-        return successResult(input.response_format, result, newmanSummaryToMarkdown(result));
-      }),
+      withUsageTracking("api_ejecutar", rawInput, () =>
+        safeToolCall(async () => {
+          const input = ApiEjecutarInputSchema.parse(rawInput);
+          const result = await runApiEjecutar(input);
+          return successResult(input.response_format, result, newmanSummaryToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -184,11 +202,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: readOnlyAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiFallosInputSchema.parse(rawInput);
-        const result = runApiFallos(input);
-        return successResult(input.response_format, result, failuresToMarkdown(result));
-      }),
+      withUsageTracking("api_fallos", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiFallosInputSchema.parse(rawInput);
+          const result = runApiFallos(input);
+          return successResult(input.response_format, result, failuresToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -201,11 +221,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: generatingAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiPipelineInputSchema.parse(rawInput);
-        const result = runApiPipeline(input);
-        return successResult(input.response_format, result, filesToMarkdown([result]));
-      }),
+      withUsageTracking("api_pipeline", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiPipelineInputSchema.parse(rawInput);
+          const result = runApiPipeline(input);
+          return successResult(input.response_format, result, filesToMarkdown([result]));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -218,11 +240,13 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: readOnlyAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(() => {
-        const input = ApiCambiosInputSchema.parse(rawInput);
-        const result = runApiCambios(input);
-        return successResult(input.response_format, result, changePlanToMarkdown(result));
-      }),
+      withUsageTracking("api_cambios", rawInput, () =>
+        safeToolCall(() => {
+          const input = ApiCambiosInputSchema.parse(rawInput);
+          const result = runApiCambios(input);
+          return successResult(input.response_format, result, changePlanToMarkdown(result));
+        }),
+      ),
   );
 
   server.registerTool(
@@ -235,12 +259,55 @@ export function registerTools(server: McpServer, _context: ToolContext = {}): vo
       annotations: prAnnotations,
     },
     async (rawInput) =>
-      safeToolCall(async () => {
-        const input = ApiPrInputSchema.parse(rawInput);
-        const result = await runApiPr(input);
-        return successResult(input.response_format, result, prResultToMarkdown(result));
-      }),
+      withUsageTracking("api_pr", rawInput, () =>
+        safeToolCall(async () => {
+          const input = ApiPrInputSchema.parse(rawInput);
+          const result = await runApiPr(input);
+          return successResult(input.response_format, result, prResultToMarkdown(result));
+        }),
+      ),
   );
+
+  server.registerTool(
+    "api_uso_tokens",
+    {
+      title: "Reporte de uso de tokens",
+      description:
+        "Reporta uso/costo ESTIMADO de tokens de la automatización (no facturación real de un LLM, este servidor no llama a modelos de lenguaje), agrupado por fase (desarrollo/ejecución) y por tool. Con generate_pdf_report=true agrega un PDF.",
+      inputSchema: ApiUsoTokensInputSchema.shape,
+      annotations: readOnlyAnnotations,
+    },
+    async (rawInput) =>
+      withUsageTracking("api_uso_tokens", rawInput, () =>
+        safeToolCall(async () => {
+          const input = ApiUsoTokensInputSchema.parse(rawInput);
+          const result = await runApiUsoTokens(input);
+          return successResult(input.response_format, result, usoTokensToMarkdown(result));
+        }),
+      ),
+  );
+}
+
+async function withUsageTracking(
+  toolName: string,
+  rawInput: unknown,
+  action: () => Promise<CallToolResult> | CallToolResult,
+): Promise<CallToolResult> {
+  const start = performance.now();
+  const result = await action();
+  const durationMs = performance.now() - start;
+  const outputText = result.content
+    .map((block) => (block.type === "text" ? block.text : ""))
+    .join("");
+  await recordUsageEvent({
+    toolName,
+    phase: classifyPhase(toolName),
+    timestamp: new Date().toISOString(),
+    durationMs,
+    estimatedInputTokens: estimateTokens(JSON.stringify(rawInput)),
+    estimatedOutputTokens: estimateTokens(outputText),
+  });
+  return result;
 }
 
 async function safeToolCall(

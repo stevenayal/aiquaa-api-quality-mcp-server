@@ -19,7 +19,10 @@ export const DEFAULT_PATHS = {
   newmanResultsJson: "test-results/newman-results.json",
   newmanJunitXml: "test-results/newman-junit.xml",
   newmanReportHtml: "test-results/newman-report.html",
+  newmanReportPdf: "test-results/newman-report.pdf",
   coverageJson: "test-results/aiquaa-api-coverage.json",
+  usageLogJsonl: "test-results/usage-log.jsonl",
+  usageReportPdf: "test-results/usage-report.pdf",
 } as const;
 
 /**

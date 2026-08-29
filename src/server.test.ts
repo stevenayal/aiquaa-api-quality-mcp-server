@@ -1,12 +1,18 @@
-import { describe, expect, it, afterEach, beforeEach } from "vitest";
+import { describe, expect, it, afterEach, afterAll, beforeEach } from "vitest";
+import { rm } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createAiquaaMcpServer } from "./server.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { DEFAULT_PATHS } from "./constants.js";
 
 describe("createAiquaaMcpServer", () => {
   let server: McpServer;
   let client: Client;
+
+  afterAll(async () => {
+    await rm(DEFAULT_PATHS.usageLogJsonl, { force: true });
+  });
 
   beforeEach(async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -21,7 +27,7 @@ describe("createAiquaaMcpServer", () => {
     await server.close();
   });
 
-  it("registers all ten tools with annotations", async () => {
+  it("registers all eleven tools with annotations", async () => {
     const listed = await client.listTools();
     expect(listed.tools.map((tool) => tool.name).sort()).toEqual(
       [
@@ -34,6 +40,7 @@ describe("createAiquaaMcpServer", () => {
         "api_pipeline",
         "api_pr",
         "api_requisitos",
+        "api_uso_tokens",
         "api_validar",
       ].sort(),
     );
@@ -174,5 +181,22 @@ describe("createAiquaaMcpServer", () => {
     });
     expect(result.isError).not.toBe(true);
     expect(JSON.stringify(result.structuredContent)).toMatch(/express/);
+  });
+
+  it("runs api_uso_tokens end to end and reports estimated usage", async () => {
+    await client.callTool({
+      name: "api_analizar",
+      arguments: {
+        source_files: [{ path: "src/a.js", content: "require('express');" }],
+        response_format: "json",
+      },
+    });
+
+    const result = await client.callTool({
+      name: "api_uso_tokens",
+      arguments: { response_format: "json" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toMatch(/desarrollo/);
   });
 });
