@@ -24,7 +24,7 @@ export interface CollectionOperationInput {
   bodyMutations?: Record<string, unknown>;
   dbValidation?: {
     preCondition?: DbPreCondition | undefined;
-    postCheck: DbPostCheck;
+    postCheck?: DbPostCheck | undefined;
   };
 }
 
@@ -162,9 +162,10 @@ function buildRootEvent(
   existingJson: Record<string, unknown> | undefined,
   sqlSandbox: CollectionSqlSandboxOptions | undefined,
 ): { event: Array<{ listen: string; script: { type: string; exec: string[] } }> } | object {
-  const existingEvent = (existingJson?.["event"] as
-    | Array<{ listen?: string; script?: { type: string; exec: string[] } }>
-    | undefined) ?? [];
+  const existingEvent =
+    (existingJson?.["event"] as
+      | Array<{ listen?: string; script?: { type: string; exec: string[] } }>
+      | undefined) ?? [];
   const hasPreRequest = existingEvent.some((event) => event.listen === "prerequest");
 
   if (hasPreRequest) {
@@ -192,7 +193,7 @@ function buildTestOptions(
     requiredFields: operation.requiredFields,
     requirementIds: operation.requirementIds,
     expectedContentType: "application/json",
-    ...(operation.dbValidation && sqlSandbox
+    ...(operation.dbValidation?.postCheck && sqlSandbox
       ? { dbPostCheck: operation.dbValidation.postCheck, sqlSandbox }
       : {}),
   };
@@ -235,7 +236,9 @@ function buildItem(
   applyBody(item, operation, prerequestScripts);
 
   if (operation.dbValidation?.preCondition && sqlSandbox) {
-    prerequestScripts.push(buildDbPreconditionScript(operation.dbValidation.preCondition, sqlSandbox));
+    prerequestScripts.push(
+      buildDbPreconditionScript(operation.dbValidation.preCondition, sqlSandbox),
+    );
   }
 
   if (prerequestScripts.length > 0) {
