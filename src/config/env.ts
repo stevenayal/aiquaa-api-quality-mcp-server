@@ -7,6 +7,7 @@ export interface ServerEnv {
   githubApiUrl: string;
   aiquaaApiBaseUrl?: string;
   aiquaaAccessToken?: string;
+  aiquaaSqlSandboxBaseUrl?: string;
   codegraphBin: string;
   codegraphAllowedRoots: string;
   engramBin: string;
@@ -21,6 +22,9 @@ export function loadServerEnv(source: NodeJS.ProcessEnv = process.env): ServerEn
     githubApiUrl: source.GITHUB_API_URL ?? "https://api.github.com",
     ...(source.AIQUAA_API_BASE_URL ? { aiquaaApiBaseUrl: source.AIQUAA_API_BASE_URL } : {}),
     ...(source.AIQUAA_ACCESS_TOKEN ? { aiquaaAccessToken: source.AIQUAA_ACCESS_TOKEN } : {}),
+    ...(source.AIQUAA_SQL_SANDBOX_BASE_URL
+      ? { aiquaaSqlSandboxBaseUrl: source.AIQUAA_SQL_SANDBOX_BASE_URL }
+      : {}),
     codegraphBin: source.CODEGRAPH_BIN?.trim() || "codegraph",
     codegraphAllowedRoots: source.CODEGRAPH_ALLOWED_ROOTS ?? "",
     engramBin: source.ENGRAM_BIN?.trim() || "engram",

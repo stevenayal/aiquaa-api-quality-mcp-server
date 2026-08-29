@@ -4,12 +4,30 @@ export interface AssertionSpec {
   body: string;
 }
 
+export interface DbSandboxRef {
+  baseUrlVariable: string;
+  apiKeyVariable: string;
+}
+
+export interface DbPreCondition {
+  query: string;
+  expect?: unknown;
+}
+
+export interface DbPostCheck {
+  query: string;
+  expect?: unknown;
+  description: string;
+}
+
 export interface TestScriptOptions {
   expectedStatus: number;
   requiredFields: string[];
   requirementIds: string[];
   maxResponseTimeMs?: number;
   expectedContentType?: string;
+  dbPostCheck?: DbPostCheck;
+  sqlSandbox?: DbSandboxRef;
 }
 
 /**
@@ -54,6 +72,12 @@ export function buildAssertions(options: TestScriptOptions): AssertionSpec[] {
     });
   }
 
+  if (options.dbPostCheck && options.sqlSandbox) {
+    assertions.push(
+      buildDbPostCheckAssertion(options.dbPostCheck, options.sqlSandbox, options.requirementIds),
+    );
+  }
+
   return assertions;
 }
 
@@ -69,6 +93,85 @@ export function buildCaptureIdScript(variableName: string, jsonField = "id"): st
     "}",
     `pm.collectionVariables.set(${JSON.stringify(variableName)}, body.${jsonField});`,
   ].join("\n");
+}
+
+export function buildSqlSandboxHelperScript(baseUrlVariable: string, apiKeyVariable: string): string {
+  return [
+    `const sqlSandboxBaseUrl = pm.collectionVariables.get(${JSON.stringify(baseUrlVariable)});`,
+    "if (!sqlSandboxBaseUrl) {",
+    `  throw new Error("Configurá la variable de colección \\"${baseUrlVariable}\\" con la URL del sandbox SQL antes de correr esta colección.");`,
+    "}",
+    `const sqlSandboxApiKey = pm.collectionVariables.get(${JSON.stringify(apiKeyVariable)}) || pm.environment.get(${JSON.stringify(apiKeyVariable)});`,
+    "if (!sqlSandboxApiKey) {",
+    `  throw new Error("Configurá la variable \\"${apiKeyVariable}\\" (environment) con la API key del sandbox SQL antes de correr esta colección.");`,
+    "}",
+  ].join("\n");
+}
+
+export function buildTemplateClonePrerequestScript(
+  templateVariable: string,
+  bodyVariable: string,
+  mutations: Record<string, unknown>,
+): string {
+  const lines = [
+    `const body = JSON.parse(pm.collectionVariables.get(${JSON.stringify(templateVariable)}));`,
+  ];
+  for (const [field, value] of Object.entries(mutations)) {
+    lines.push(`body[${JSON.stringify(field)}] = ${JSON.stringify(value)};`);
+  }
+  lines.push(`pm.collectionVariables.set(${JSON.stringify(bodyVariable)}, JSON.stringify(body));`);
+  return lines.join("\n");
+}
+
+function buildSqlSandboxRequestObject(sandbox: DbSandboxRef, query: string): string {
+  return [
+    "{",
+    `  url: \`\${pm.collectionVariables.get(${JSON.stringify(sandbox.baseUrlVariable)})}/query\`,`,
+    '  method: "POST",',
+    "  header: {",
+    '    "Content-Type": "application/json",',
+    `    Authorization: \`Bearer \${pm.collectionVariables.get(${JSON.stringify(sandbox.apiKeyVariable)})}\`,`,
+    "  },",
+    "  body: {",
+    '    mode: "raw",',
+    `    raw: JSON.stringify({ query: ${JSON.stringify(query)} }),`,
+    "  },",
+    "}",
+  ].join("\n");
+}
+
+export function buildDbPreconditionScript(preCondition: DbPreCondition, sandbox: DbSandboxRef): string {
+  return [
+    `pm.sendRequest(${buildSqlSandboxRequestObject(sandbox, preCondition.query)}, (error, response) => {`,
+    "  if (error) {",
+    '    throw new Error(`Precondición SQL falló: ${error.message}`);',
+    "  }",
+    "  const result = response.json();",
+    `  if (JSON.stringify(result) !== JSON.stringify(${JSON.stringify(preCondition.expect)})) {`,
+    `    throw new Error(\`Precondición SQL no cumplida para "${preCondition.query.replace(/`/g, "'")}"\`);`,
+    "  }",
+    "});",
+  ].join("\n");
+}
+
+export function buildDbPostCheckAssertion(
+  postCheck: DbPostCheck,
+  sandbox: DbSandboxRef,
+  requirementIds: string[],
+): AssertionSpec {
+  const tag = requirementIds.length > 0 ? `${requirementIds.join(" | ")} | ` : "";
+  const name = `${tag}${postCheck.description}`;
+  const body = [
+    `pm.test(${JSON.stringify(name)}, () => {`,
+    `  pm.sendRequest(${buildSqlSandboxRequestObject(sandbox, postCheck.query)}, (error, response) => {`,
+    "    pm.expect(error).to.be.null;",
+    "    const result = response.json();",
+    `    pm.expect(result).to.eql(${JSON.stringify(postCheck.expect)});`,
+    "  });",
+    "});",
+  ].join("\n");
+
+  return { name, traceabilityIds: requirementIds, body };
 }
 
 export function buildBearerAuthPreRequestScript(tokenVariable = "accessToken"): string {

@@ -80,6 +80,28 @@ export function runApiValidar(input: ApiValidarInput): ApiValidarResult {
     }
   }
 
+  const hasSqlSandbox = summary.variables.some(
+    (v) => v.key === "sqlSandboxBaseUrl" || v.key === "sqlSandboxApiKey",
+  );
+  if (hasSqlSandbox) {
+    const writeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+    for (const request of summary.requests) {
+      if (!writeMethods.has(request.method)) continue;
+      if (!request.hasPreRequestScript) {
+        findings.push({
+          severity: "warning",
+          message: `El request "${request.name}" es de escritura pero no tiene pre-request script (revisá si necesita clonar/mutar un body de plantilla o validar una precondición SQL).`,
+        });
+      }
+      if (!request.hasDbVerification) {
+        findings.push({
+          severity: "warning",
+          message: `El request "${request.name}" es de escritura pero su test script no verifica el efecto en base (sin pm.sendRequest al sandbox SQL).`,
+        });
+      }
+    }
+  }
+
   const declaredVariableKeys = new Set(summary.variables.map((v) => v.key));
   let environmentJson: Record<string, unknown> | undefined;
   if (input.environment) {
@@ -105,6 +127,14 @@ export function runApiValidar(input: ApiValidarInput): ApiValidarResult {
   while ((match = varRegex.exec(collectionText)) !== null) {
     if (match[1]) usedVariables.add(match[1]);
   }
+
+  // Variables set at runtime by a prerequest script (e.g. the clone+mutate
+  // body-template pattern) are legitimately undeclared statically.
+  const dynamicSetRegex = /pm\.collectionVariables\.set\(\s*\\?["'`]([A-Za-z0-9_.]+)\\?["'`]/g;
+  while ((match = dynamicSetRegex.exec(collectionText)) !== null) {
+    if (match[1]) declaredVariableKeys.add(match[1]);
+  }
+
   for (const variable of usedVariables) {
     if (!declaredVariableKeys.has(variable)) {
       findings.push({

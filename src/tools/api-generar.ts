@@ -30,19 +30,42 @@ export function runApiGenerar(input: ApiGenerarInput): ApiGenerarResult {
       expectedStatus: operation.expectedStatus,
       requiredFields: operation.requiredFields,
       requirementIds: operation.requirementIds,
+      ...(operation.bodyTemplateVariable
+        ? { bodyTemplateVariable: operation.bodyTemplateVariable }
+        : {}),
+      ...(operation.bodyMutations ? { bodyMutations: operation.bodyMutations } : {}),
+      ...(operation.dbValidation ? { dbValidation: operation.dbValidation } : {}),
     })),
     ...(input.existing_collection ? { existingCollection: input.existing_collection } : {}),
+    ...(input.sql_sandbox
+      ? {
+          sqlSandbox: {
+            baseUrlVariable: input.sql_sandbox.base_url_variable,
+            apiKeyVariable: input.sql_sandbox.api_key_variable,
+          },
+        }
+      : {}),
   });
+
+  const sqlSandboxVariables = input.sql_sandbox
+    ? [
+        { key: input.sql_sandbox.base_url_variable, value: "", secret: false },
+        { key: input.sql_sandbox.api_key_variable, value: "", secret: true },
+      ]
+    : [];
 
   const environmentJson = generateOrExtendEnvironment({
     environmentName: input.environment_name ?? `${apiSlug} Local`,
     baseUrl: "",
     baseUrlVariable: input.base_url_variable,
-    variables: input.environment_variables.map((v) => ({
-      key: v.key,
-      value: v.value,
-      secret: v.secret,
-    })),
+    variables: [
+      ...input.environment_variables.map((v) => ({
+        key: v.key,
+        value: v.value,
+        secret: v.secret,
+      })),
+      ...sqlSandboxVariables,
+    ],
     ...(input.existing_environment ? { existingEnvironment: input.existing_environment } : {}),
   });
 
