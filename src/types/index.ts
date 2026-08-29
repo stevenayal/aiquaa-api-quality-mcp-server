@@ -188,6 +188,7 @@ export interface NewmanRunSummary {
   failedAssertions: number;
   durationMs: number;
   results: NewmanTestResult[];
+  pdfReportPath?: string;
 }
 
 export type FailureCategory =
